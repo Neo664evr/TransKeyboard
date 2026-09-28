@@ -20,9 +20,8 @@ jobs:
           xcode-select -p
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version || true
-          ls /Applications | grep -i xcode || true
 
-      - name: Build for device (unsigned)
+      - name: Build for device (unsigned, self-contained Debug)
         run: |
           set -o pipefail
           xcodebuild \
@@ -34,6 +33,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            ENABLE_DEBUG_DYLIB=NO \
+            ENABLE_PREVIEWS=NO \
             build
 
       - name: Package IPA and verify structure
@@ -43,16 +44,23 @@ jobs:
           if [ -z "$APP" ]; then echo "GeminiVoice.app not found" >&2; exit 1; fi
           echo "APP=$APP"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist"
+          echo "--- main binary ---"
+          file "$APP/GeminiVoice"
           echo "--- PlugIns ---"
           ls -1 "$APP/PlugIns" || { echo "no PlugIns directory" >&2; exit 1; }
           test -f "$APP/PlugIns/Gemini Voice Keyboard.appex/Info.plist"
           test -f "$APP/PlugIns/Gemini Voice Activity.appex/Info.plist"
+          echo "--- stray debug artifacts (should be empty) ---"
+          find "$APP" -name '*.debug.dylib' -o -name '__preview.dylib' | tee /dev/stderr | wc -l
+          echo "--- extraction entitlements of keyboard extension ---"
+          codesign -d --entitlements - "$APP/PlugIns/Gemini Voice Keyboard.appex" 2>&1 | head -5 || true
           rm -rf dist && mkdir -p dist/Payload
           cp -R "$APP" dist/Payload/
           (cd dist && zip -qry TransKeyboard-unsigned.ipa Payload)
           echo "--- IPA ---"
           ls -la dist/*.ipa
-          unzip -l dist/TransKeyboard-unsigned.ipa | head -25
+          unzip -l dist/TransKeyboard-unsigned.ipa | tail -8
           sha256sum dist/TransKeyboard-unsigned.ipa
 
       - uses: actions/upload-artifact@v4
