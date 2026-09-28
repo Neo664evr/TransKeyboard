@@ -1,0 +1,54 @@
+name: Simulator tests (iOS 27)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: xcode-27
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report toolchain and simulators
+        run: |
+          xcodebuild -version
+          xcrun simctl list devices available | sed -n '1,40p'
+
+      - name: Ensure Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain || echo "metal component step skipped"
+
+      - name: Run unit tests on iPhone 17 simulator
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project GeminiVoiceKeyboard.xcodeproj \
+            -scheme GeminiVoiceUnitTests \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -derivedDataPath "$PWD/build-tests" \
+            -resultBundlePath "$PWD/test-results.xcresult" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            | grep -E "Test Suite|Test Case|passed|failed|error:|\*\* TEST" | tail -120
+
+      - name: Summarize results
+        if: always()
+        run: |
+          if [ -d "$PWD/test-results.xcresult" ]; then
+            xcrun xcresulttool get test-results summary --path "$PWD/test-results.xcresult" || true
+          else
+            echo "no result bundle"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: simulator-test-results
+          path: test-results.xcresult
+          if-no-files-found: warn
+          retention-days: 7
