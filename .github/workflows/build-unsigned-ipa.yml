@@ -1,0 +1,62 @@
+name: Unsigned IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report toolchain
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version || true
+          ls /Applications | grep -i xcode || true
+
+      - name: Build for device (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project GeminiVoiceKeyboard.xcodeproj \
+            -scheme GeminiVoice \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package IPA and verify structure
+        run: |
+          set -euo pipefail
+          APP="$(find "$PWD/build/Build/Products" -maxdepth 2 -name 'GeminiVoice.app' -type d | head -n 1)"
+          if [ -z "$APP" ]; then echo "GeminiVoice.app not found" >&2; exit 1; fi
+          echo "APP=$APP"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist"
+          echo "--- PlugIns ---"
+          ls -1 "$APP/PlugIns" || { echo "no PlugIns directory" >&2; exit 1; }
+          test -f "$APP/PlugIns/Gemini Voice Keyboard.appex/Info.plist"
+          test -f "$APP/PlugIns/Gemini Voice Activity.appex/Info.plist"
+          rm -rf dist && mkdir -p dist/Payload
+          cp -R "$APP" dist/Payload/
+          (cd dist && zip -qry TransKeyboard-unsigned.ipa Payload)
+          echo "--- IPA ---"
+          ls -la dist/*.ipa
+          unzip -l dist/TransKeyboard-unsigned.ipa | head -25
+          sha256sum dist/TransKeyboard-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TransKeyboard-unsigned-ipa
+          path: dist/*.ipa
+          if-no-files-found: error
